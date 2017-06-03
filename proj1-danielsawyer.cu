@@ -106,6 +106,35 @@ void output_histogram(){
 		else printf("| ");
 	}
 }
+void output_histogram(bucket* histogram2){
+	int i; 
+	long long total_cnt = 0;
+	for(i=0; i< num_buckets; i++) {
+		if(i%5 == 0) /* we print 5 buckets in a row */
+			printf("\n%02d: ", i);
+		printf("%15lld ", histogram2[i].d_cnt);
+		total_cnt += histogram2[i].d_cnt;
+	  	/* we also want to make sure the total distance count is correct */
+		if(i == num_buckets - 1)	
+			printf("\n T:%lld \n", total_cnt);
+		else printf("| ");
+	}
+}
+void output_histogram(bucket* histogram1, bucket* histogram2){
+	int i; 
+	long long total_cnt = 0, total_cnt2 = 0;
+	for(i=0; i< num_buckets; i++) {
+		if(i%5 == 0) /* we print 5 buckets in a row */
+			printf("\n%02d: ", i);
+		printf("%15lld ", abs(histogram1[i].d_cnt - histogram2[i].d_cnt));
+		total_cnt += histogram1[i].d_cnt;
+		total_cnt2 += histogram2[i].d_cnt;
+	  	/* we also want to make sure the total distance count is correct */
+		if(i == num_buckets - 1)	
+			printf("\n T:%lld \n", abs(total_cnt - total_cnt2));
+		else printf("| ");
+	}
+}
 
 /* 
 	brute-force SDH solution in a single CPU thread 
@@ -124,7 +153,7 @@ int PDH_baseline() {
 	return 0;
 }
 
-//CUDA KERNEL FOR SDH BULLSHIT
+//CUDA KERNEL FOR SDH
 __global__ void PDH_Cuda(atom *d_atom_list, bucket *d_histogram, long long d_PDH_acnt, double d_PDH_res) {
 
 	double dist;
@@ -184,7 +213,8 @@ int main(int argc, char **argv)
 	//Host vars and sets all histogram to 0.
 	int size_hist = sizeof(bucket)*num_buckets;
 	int size_atom = sizeof(atom)*PDH_acnt;
-	memset(histogram, 0, size_hist);
+	//memset(histogram, 0, size_hist);
+	bucket *histogram2 = (bucket*)malloc(size_hist);
 
 	//Device Vars
 	bucket *d_histogram;
@@ -196,7 +226,7 @@ int main(int argc, char **argv)
 
 	//Copy to device
 	cudaMemcpy(d_atom_list, atom_list, size_atom, cudaMemcpyHostToDevice);
-	cudaMemcpy(d_histogram, histogram, size_hist, cudaMemcpyHostToDevice);
+	cudaMemcpy(d_histogram, histogram2, size_hist, cudaMemcpyHostToDevice);
 
 	//start counting time
 	gettimeofday(&startTime, &Idunno);
@@ -205,13 +235,18 @@ int main(int argc, char **argv)
 	int numBlocks = ceil(PDH_acnt/32.0);
 	// printf("\nNUM BLOCKS = %d\n",numBlocks);
 	PDH_Cuda<<<numBlocks,32>>>(d_atom_list, d_histogram, PDH_acnt, PDH_res);
-	cudaMemcpy(histogram, d_histogram, size_hist, cudaMemcpyDeviceToHost);
+	cudaMemcpy(histogram2, d_histogram, size_hist, cudaMemcpyDeviceToHost);
 
 	//check runtime
 	report_running_time(1);
 
 	//print histogram
-	output_histogram();
+	//memset(histogram2, 0, size_hist);
+	output_histogram(histogram2);
+
+	//Difference
+	printf("\nCPU vs GPU Histogram Differences\n");
+	output_histogram(histogram, histogram2);
 
 	//Free memory.
 	free(histogram); free(atom_list);
