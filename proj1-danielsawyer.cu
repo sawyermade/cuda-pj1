@@ -58,8 +58,6 @@ double p2p_distance(int ind1, int ind2) {
 }
 
 
-
-
 /* 
 	set a checkpoint and show the (natural) running time in seconds 
 */
@@ -75,7 +73,7 @@ double report_running_time() {
 	printf("Running time for CPU version: %ld.%06ld\n", sec_diff, usec_diff);
 	return (double)(sec_diff*1.0 + usec_diff/1000000.0);
 }
-
+//overloaded to show GPU time
 double report_running_time(int blah) {
 	long sec_diff, usec_diff;
 	gettimeofday(&endTime, &Idunno);
@@ -106,20 +104,22 @@ void output_histogram(){
 		else printf("| ");
 	}
 }
-void output_histogram(bucket* histogram2){
+//overloaded taking 1 arg
+void output_histogram(bucket* histogram1){
 	int i; 
 	long long total_cnt = 0;
 	for(i=0; i< num_buckets; i++) {
 		if(i%5 == 0) /* we print 5 buckets in a row */
 			printf("\n%02d: ", i);
-		printf("%15lld ", histogram2[i].d_cnt);
-		total_cnt += histogram2[i].d_cnt;
+		printf("%15lld ", histogram1[i].d_cnt);
+		total_cnt += histogram1[i].d_cnt;
 	  	/* we also want to make sure the total distance count is correct */
 		if(i == num_buckets - 1)	
 			printf("\n T:%lld \n", total_cnt);
 		else printf("| ");
 	}
 }
+//overloaded taking 2 args
 void output_histogram(bucket* histogram1, bucket* histogram2){
 	int i; 
 	long long total_cnt = 0, total_cnt2 = 0;
@@ -166,14 +166,42 @@ __global__ void PDH_Cuda(atom *d_atom_list, bucket *d_histogram, long long d_PDH
 		dist = sqrt( (d_atom_list[i].x_pos - d_atom_list[j].x_pos)*(d_atom_list[i].x_pos - d_atom_list[j].x_pos) +
 					 (d_atom_list[i].y_pos - d_atom_list[j].y_pos)*(d_atom_list[i].y_pos - d_atom_list[j].y_pos) +
 					 (d_atom_list[i].z_pos - d_atom_list[j].z_pos)*(d_atom_list[i].z_pos - d_atom_list[j].z_pos) );
-		h_pos = (int)(dist/d_PDH_res);
-		//d_histogram[h_pos].d_cnt++;
-		
+		h_pos = (int)(dist/d_PDH_res);		
 		atomicAdd((unsigned long long int*)&d_histogram[h_pos].d_cnt,1);
+		//d_histogram[h_pos].d_cnt++;
 		//__syncthreads();
 	}
 }
 
+void CudaPrep(bucket * histogram2) {
+
+	//thread and block vars and sizes
+	int threads = 32;
+	int numBlocks = ceil(PDH_acnt/(double)threads);
+	int size_atom = sizeof(atom)*PDH_acnt;
+	int size_hist = sizeof(bucket)*num_buckets;
+
+	//Device Vars
+	bucket *d_histogram;
+	atom *d_atom_list;
+
+	//Allocate device memory
+	cudaMalloc((void **) &d_histogram, size_hist);
+	cudaMalloc((void**) &d_atom_list, size_atom);
+
+	//Copy to device
+	cudaMemcpy(d_atom_list, atom_list, size_atom, cudaMemcpyHostToDevice);
+	cudaMemcpy(d_histogram, histogram2, size_hist, cudaMemcpyHostToDevice);
+
+	//run cuda kernel
+	PDH_Cuda<<<numBlocks,threads>>>(d_atom_list, d_histogram, PDH_acnt, PDH_res);
+
+	//copy new gpu histogram back to host from device
+	cudaMemcpy(histogram2, d_histogram, size_hist, cudaMemcpyDeviceToHost);
+
+	//free device memory
+	cudaFree(d_histogram); cudaFree(d_atom_list);
+}
 
 int main(int argc, char **argv)
 {
@@ -210,49 +238,29 @@ int main(int argc, char **argv)
 
 
 	/* NEW SHIT */
-	//Host vars and sets all histogram to 0.
-	int size_hist = sizeof(bucket)*num_buckets;
-	int size_atom = sizeof(atom)*PDH_acnt;
-	//memset(histogram, 0, size_hist);
-	bucket *histogram2 = (bucket*)malloc(size_hist);
 
-	//Device Vars
-	bucket *d_histogram;
-	atom *d_atom_list;
+	//New histogram that will come from the device
+	bucket *histogram2 = (bucket*)malloc(sizeof(bucket)*num_buckets);
+	//memset(histogram2, 0, size_hist);
 
-	//Allocate device memory
-	cudaMalloc((void **) &d_histogram, size_hist);
-	cudaMalloc((void**) &d_atom_list, size_atom);
-
-	//Copy to device
-	cudaMemcpy(d_atom_list, atom_list, size_atom, cudaMemcpyHostToDevice);
-	cudaMemcpy(d_histogram, histogram2, size_hist, cudaMemcpyHostToDevice);
-
-	//start counting time
+	//start time
 	gettimeofday(&startTime, &Idunno);
 
-	//call kernel
-	int numBlocks = ceil(PDH_acnt/32.0);
-	// printf("\nNUM BLOCKS = %d\n",numBlocks);
-	PDH_Cuda<<<numBlocks,32>>>(d_atom_list, d_histogram, PDH_acnt, PDH_res);
-	cudaMemcpy(histogram2, d_histogram, size_hist, cudaMemcpyDeviceToHost);
+	//run on GPU
+	CudaPrep(histogram2);
 
 	//check runtime
 	report_running_time(1);
 
-	//print histogram
-	//memset(histogram2, 0, size_hist);
+	//print device histogram
 	output_histogram(histogram2);
 
-	//Difference
+	//Difference between cpu and gpu
 	printf("\nCPU vs GPU Histogram Differences\n");
 	output_histogram(histogram, histogram2);
 
 	//Free memory.
 	free(histogram); free(atom_list);
-	cudaFree(d_histogram); cudaFree(d_atom_list);
-
+	
 	return 0;
 }
-
-
