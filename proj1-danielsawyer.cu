@@ -1,7 +1,7 @@
 /* ==================================================================
-	Programmer: Yicheng Tu (ytu@cse.usf.edu)
+	Programmer: Daniel Sawyer (danielsawyer@mail.usf.edu)
 	The basic SDH algorithm implementation for 3D data
-	To compile: nvcc SDH.c -o SDH in the rc machines
+	To compile: nvcc proj1-danielsawyer.cu -o SDH in the rc machines
    ==================================================================
 */
 
@@ -13,6 +13,7 @@
 //MY INCLUDES
 #include <iostream>
 #include <cuda_runtime.h>
+#include <cuda.h>
 
 
 #define BOX_SIZE	23000 /* size of the data box on one dimension            */
@@ -161,6 +162,7 @@ __global__ void PDH_Cuda(atom *d_atom_list, bucket *d_histogram, long long d_PDH
 
 	i = threadIdx.x + blockDim.x * blockIdx.x;
 	//if(i == 0) printf("\nTHE I VALUE = 0\n");
+	//if(i == 0) printf("\nwarpSize = %d\n", warpSize);
 	for(j = i+1; j < d_PDH_acnt; ++j) {
 
 		dist = sqrt( (d_atom_list[i].x_pos - d_atom_list[j].x_pos)*(d_atom_list[i].x_pos - d_atom_list[j].x_pos) +
@@ -175,11 +177,18 @@ __global__ void PDH_Cuda(atom *d_atom_list, bucket *d_histogram, long long d_PDH
 
 void CudaPrep(bucket * histogram2) {
 
-	//thread and block vars and sizes
-	int threads = 32;
-	int numBlocks = ceil(PDH_acnt/(double)threads);
+	//sizes of atom and bucket arrays
 	int size_atom = sizeof(atom)*PDH_acnt;
 	int size_hist = sizeof(bucket)*num_buckets;
+
+	//grid and block sizes
+	int dev = 0;
+	cudaSetDevice(dev);
+    cudaDeviceProp deviceProp;
+    cudaGetDeviceProperties(&deviceProp, dev);
+	//printf("\nWARP = %d\n", deviceProp.warpSize);
+	dim3 threads(deviceProp.warpSize);
+	dim3 grid(ceil((float)PDH_acnt/threads.x));
 
 	//Device Vars
 	bucket *d_histogram;
@@ -191,10 +200,10 @@ void CudaPrep(bucket * histogram2) {
 
 	//Copy to device
 	cudaMemcpy(d_atom_list, atom_list, size_atom, cudaMemcpyHostToDevice);
-	cudaMemcpy(d_histogram, histogram2, size_hist, cudaMemcpyHostToDevice);
+	cudaMemset(d_histogram, 0, size_hist);
 
 	//run cuda kernel
-	PDH_Cuda<<<numBlocks,threads>>>(d_atom_list, d_histogram, PDH_acnt, PDH_res);
+	PDH_Cuda<<<grid,threads>>>(d_atom_list, d_histogram, PDH_acnt, PDH_res);
 
 	//copy new gpu histogram back to host from device
 	cudaMemcpy(histogram2, d_histogram, size_hist, cudaMemcpyDeviceToHost);
